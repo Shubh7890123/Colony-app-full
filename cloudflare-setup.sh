@@ -12,6 +12,27 @@ green() { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 die() { red "ERROR: $*"; exit 1; }
 
+wait_for_apt_locks() {
+  local max_wait_seconds="${1:-600}"
+  local waited_seconds=0
+  local lock_holders
+
+  while true; do
+    lock_holders="$(sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock 2>/dev/null || true)"
+    if [[ -z "$lock_holders" ]]; then
+      return 0
+    fi
+
+    if (( waited_seconds >= max_wait_seconds )); then
+      die "apt/dpkg is still locked after ${max_wait_seconds}s by process(es): $lock_holders. Wait for Ubuntu updates to finish, then rerun this script."
+    fi
+
+    yellow "apt/dpkg is busy, likely Ubuntu auto-update. Waiting... (${waited_seconds}s/${max_wait_seconds}s)"
+    sleep 10
+    waited_seconds=$((waited_seconds + 10))
+  done
+}
+
 load_config() {
   [[ -f "$CONFIG_FILE" ]] || die "Missing $CONFIG_FILE. Copy cloudflare.config.example.sh to cloudflare.config.sh and fill it in."
   # shellcheck disable=SC1090
@@ -42,7 +63,9 @@ install_cloudflared_if_needed() {
   sudo mkdir -p --mode=0755 /usr/share/keyrings
   curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
   echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
+  wait_for_apt_locks 600
   sudo apt-get update
+  wait_for_apt_locks 600
   sudo apt-get install -y cloudflared
 }
 

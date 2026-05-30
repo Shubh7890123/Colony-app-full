@@ -1,0 +1,10 @@
+cloudflare.config.sh
+.env.local
+.env.tunnel
+.local/
+.colony-dev-state
+.backend-dev.pid
+.backend-dev.log
+.cloudflared-tunnel.pid
+.cloudflared-tunnel.log
+.tunnel-status

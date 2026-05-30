@@ -11,13 +11,36 @@ yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 die() { red "ERROR: $*"; exit 1; }
 
+wait_for_apt_locks() {
+  local max_wait_seconds="${1:-600}"
+  local waited_seconds=0
+  local lock_holders
+
+  while true; do
+    lock_holders="$(sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock 2>/dev/null || true)"
+    if [[ -z "$lock_holders" ]]; then
+      return 0
+    fi
+
+    if (( waited_seconds >= max_wait_seconds )); then
+      die "apt/dpkg is still locked after ${max_wait_seconds}s by process(es): $lock_holders. Wait for Ubuntu updates to finish, then rerun ./colony-dev.sh auto"
+    fi
+
+    yellow "apt/dpkg is busy, likely Ubuntu auto-update. Waiting... (${waited_seconds}s/${max_wait_seconds}s)"
+    sleep 10
+    waited_seconds=$((waited_seconds + 10))
+  done
+}
+
 ensure_wsl() {
   grep -qi microsoft /proc/version || yellow "This script is intended for Ubuntu on WSL2. Continuing anyway."
 }
 
 install_base_packages() {
   yellow "Installing base packages if missing..."
+  wait_for_apt_locks 600
   sudo apt-get update
+  wait_for_apt_locks 600
   sudo apt-get install -y ca-certificates curl gnupg git jq lsb-release openssl python3
 }
 
@@ -52,7 +75,9 @@ install_docker_if_needed() {
     sudo chmod a+r /etc/apt/keyrings/docker.asc
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" \
       | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+    wait_for_apt_locks 600
     sudo apt-get update
+    wait_for_apt_locks 600
     sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   fi
 
@@ -93,6 +118,7 @@ install_coolify_if_needed() {
   [[ -n "$root_password" ]] || die "Coolify admin password is required."
 
   yellow "Installing Coolify with the official installer..."
+  wait_for_apt_locks 600
   curl -fsSL "$COOLIFY_INSTALL_URL" | sudo -E env \
     ROOT_USERNAME="$root_username" \
     ROOT_USER_EMAIL="$root_email" \
